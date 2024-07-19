@@ -6,34 +6,51 @@ const router = express.Router();
 
 // Envoyer une demande d’amitié
 router.post('/send', authenticateToken, (req, res) => {
-    const { receiverId } = req.body;
+    const { receiverLogin } = req.body;
     const senderId = req.user.id;
 
-    if (senderId === receiverId) {
+    if (!receiverLogin) {
+        return res.status(400).json({ message: 'Receiver login is required.' });
+    }
+
+    if (senderId === receiverLogin) {
         return res.status(400).json({ message: 'Vous ne pouvez pas vous ajouter comme ami.' });
     }
 
-    const checkExistingRequestSql = `SELECT * FROM FriendRequests WHERE senderid = ? AND receiverid = ?`;
-    const insertRequestSql = `INSERT INTO FriendRequests (senderid, receiverid, status) VALUES (?, ?, 'pending')`;
-
-    db.get(checkExistingRequestSql, [senderId, receiverId], (err, row) => {
-
-        console.log('check coucou', req.user.id);
+    // Rechercher l'ID du destinataire à partir de son login
+    const findReceiverSql = `SELECT id FROM users WHERE login = ?`;
+    db.get(findReceiverSql, [receiverLogin], (err, receiver) => {
         if (err) {
             console.error(err.message);
-            return res.status(500).json({ message: 'Erreur lors de la vérification de la demande.' });
+            return res.status(500).json({ message: 'Erreur lors de la vérification du destinataire.' });
         }
 
-        if (row) {
-            return res.status(400).json({ message: 'Une demande existe déjà.' });
+        if (!receiver) {
+            return res.status(404).json({ message: 'Receiver not found.' });
         }
 
-        db.run(insertRequestSql, [senderId, receiverId], function (err) {
+        const receiverId = receiver.id;
+
+        const checkExistingRequestSql = `SELECT * FROM FriendRequests WHERE senderid = ? AND receiverid = ?`;
+        const insertRequestSql = `INSERT INTO FriendRequests (senderid, receiverid, status) VALUES (?, ?, 'pending')`;
+
+        db.get(checkExistingRequestSql, [senderId, receiverId], (err, row) => {
             if (err) {
                 console.error(err.message);
-                return res.status(500).json({ message: 'Erreur lors de l’envoi de la demande.' });
+                return res.status(500).json({ message: 'Erreur lors de la vérification de la demande.' });
             }
-            res.status(200).json({ message: 'Demande d’amitié envoyée.' });
+
+            if (row) {
+                return res.status(400).json({ message: 'Une demande existe déjà.' });
+            }
+
+            db.run(insertRequestSql, [senderId, receiverId], function (err) {
+                if (err) {
+                    console.error(err.message);
+                    return res.status(500).json({ message: 'Erreur lors de l’envoi de la demande.' });
+                }
+                res.status(200).json({ message: 'Demande d’amitié envoyée.' });
+            });
         });
     });
 });
@@ -41,27 +58,44 @@ router.post('/send', authenticateToken, (req, res) => {
 // Accepter une demande d’amitié
 router.post('/accept', authenticateToken, (req, res) => {
     const { requestId } = req.body;
-    const userId = req.user.id;
+    const receiverId = req.user.id;
 
-    const updateRequestSql = `UPDATE FriendRequests SET status = 'accepted' WHERE id = ? AND receiverid = ? AND status = 'pending'`;
-    const insertFriendSql = `INSERT INTO Friends (userid, friendid) VALUES (?, ?), (?, ?)`;
+    // Récupérer les IDs du demandeur et du receveur à partir de la table FriendRequests
+    const getRequestSql = `SELECT senderId, receiverId FROM FriendRequests WHERE id = ? AND receiverId = ? AND status = 'pending'`;
 
-    db.run(updateRequestSql, [requestId, userId], function (err) {
+    db.get(getRequestSql, [requestId, receiverId], (err, row) => {
         if (err) {
-            console.error(err.message);
-            return res.status(500).json({ message: 'Erreur lors de l’acceptation de la demande.' });
+            console.error('Error retrieving request:', err.message);
+            return res.status(500).json({ message: 'Erreur lors de la récupération de la demande.' });
         }
 
-        const insertFriendValues = [userId, (requestId), (requestId), userId];
-        db.run(insertFriendSql, insertFriendValues, function (err) {
+        if (!row) {
+            return res.status(404).json({ message: 'Demande non trouvée ou déjà acceptée.' });
+        }
+
+        const senderId = row.senderId;
+        const receiverId = row.receiverId;
+
+        const updateRequestSql = `UPDATE FriendRequests SET status = 'accepted' WHERE id = ?`;
+        const insertFriendSql = `INSERT INTO Friends (userid, friendid) VALUES (?, ?), (?, ?)`;
+
+        db.run(updateRequestSql, [requestId], function (err) {
             if (err) {
-                console.error(err.message);
-                return res.status(500).json({ message: 'Erreur lors de l’ajout de l’amitié.' });
+                console.error('Error updating request:', err.message);
+                return res.status(500).json({ message: 'Erreur lors de l’acceptation de la demande.' });
             }
-            res.status(200).json({ message: 'Demande d’amitié acceptée.' });
+
+            db.run(insertFriendSql, [senderId, receiverId, receiverId, senderId], function (err) {
+                if (err) {
+                    console.error('Error inserting friendship:', err.message);
+                    return res.status(500).json({ message: 'Erreur lors de l’ajout de l’amitié.' });
+                }
+                res.status(200).json({ message: 'Demande d’amitié acceptée.' });
+            });
         });
     });
 });
+
 
 // Refuser une demande d’amitié
 router.post('/reject', authenticateToken, (req, res) => {
@@ -85,7 +119,7 @@ router.get('/list', authenticateToken, (req, res) => {
 
     const listFriendsSql = `SELECT u.id, u.login 
                             FROM Friends f
-                            JOIN users u ON u.id = f.friendid
+                            JOIN Users u ON u.id = f.friendid
                             WHERE f.userid = ?`;
 
     db.all(listFriendsSql, [userId], (err, rows) => {
@@ -98,28 +132,26 @@ router.get('/list', authenticateToken, (req, res) => {
 });
 
 // Liste des demandes d'amitié reçues
-// Routes pour obtenir les demandes d'amitié reçues
 router.get('/requests', authenticateToken, (req, res) => {
     const userId = req.user.id;
 
     console.log('Fetching friend requests for user ID:', userId);
 
-    db.all(
-        `SELECT * FROM FriendRequests WHERE receiverId = ? AND status = 'pending'`,
-        [userId],
-        (err, rows) => {
-            if (err) {
-                console.error('Error fetching friend requests:', err);
-                return res.status(500).json({ message: 'Erreur lors de la récupération des demandes d’amitié.' });
-            }
+    const getRequestSql = `SELECT f.id, u.login AS senderLogin, f.status 
+                           FROM FriendRequests f
+                           JOIN Users u ON u.id = f.senderid
+                           WHERE f.receiverid = ? AND f.status = 'pending'`;
 
-            console.log('Fetched friend requests:', rows);
-
-            res.status(200).json(rows);
+    db.all(getRequestSql, [userId], (err, rows) => {
+        if (err) {
+            console.error('Error fetching friend requests:', err);
+            return res.status(500).json({ message: 'Erreur lors de la récupération des demandes d’amitié.' });
         }
-    );
+
+        console.log('Fetched friend requests:', rows);
+
+        res.status(200).json(rows);
+    });
 });
-
-
 
 export default router;

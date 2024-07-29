@@ -86,7 +86,7 @@ server.listen(port, () => {
 ;
 
 // Fermeture de la base de données lorsque l'application se termine
-import db from './db.mjs'; // Assure-toi que db.mjs est correctement exporté
+import db from './db.mjs'; 
 
 process.on('SIGINT', () => {
     db.close(err => {

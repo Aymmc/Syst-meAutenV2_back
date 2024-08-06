@@ -47,7 +47,7 @@ app.get('/user', authenticateToken, (req, res) => {
 
 // Configurer les événements de Socket.IO
 io.on('connection', (socket) => {
-    console.log('Un utilisateur est connecté');
+  
 
     // Émettre une demande d'amitié
     socket.on('send friend request', (data) => {
@@ -75,7 +75,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log('Un utilisateur s\'est déconnecté');
     });
 });
 

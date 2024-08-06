@@ -135,8 +135,6 @@ router.get('/list', authenticateToken, (req, res) => {
 router.get('/requests', authenticateToken, (req, res) => {
     const userId = req.user.id;
 
-    console.log('Fetching friend requests for user ID:', userId);
-
     const getRequestSql = `SELECT f.id, u.login AS senderLogin, f.status 
                            FROM FriendRequests f
                            JOIN Users u ON u.id = f.senderid
@@ -148,7 +146,7 @@ router.get('/requests', authenticateToken, (req, res) => {
             return res.status(500).json({ message: 'Erreur lors de la récupération des demandes d’amitié.' });
         }
 
-        console.log('Fetched friend requests:', rows);
+  
 
         res.status(200).json(rows);
     });
